@@ -38,6 +38,9 @@ function getVideoId(url) {
     return null;
 }
 
+// ============================================
+// AUDIO APIS
+// ============================================
 const getAudioAPIs = (url) => [
     { url: `${API_BASE}/yta8?url=${encodeURIComponent(url)}`, timeout: 25000 },
     { url: `${API_BASE}/yta9?url=${encodeURIComponent(url)}`, timeout: 25000 },
@@ -50,94 +53,24 @@ const getAudioAPIs = (url) => [
     { url: `${API_BASE}/yta5?url=${encodeURIComponent(url)}`, timeout: 25000 }
 ];
 
-// Order: V3 → YTDL → V1 → V2
-const getVideoAPIs = (url) => [
-    { url: `${API_BASE}/ytv3?url=${encodeURIComponent(url)}`, timeout: 25000 },
-    { url: `${API_BASE}/ytdl?url=${encodeURIComponent(url)}`, timeout: 30000 },
-    { url: `${API_BASE}/ytv1?url=${encodeURIComponent(url)}`, timeout: 25000 },
-    { url: `${API_BASE}/ytv2?url=${encodeURIComponent(url)}`, timeout: 25000 }
+// ============================================
+// NORMAL VIDEO APIS (return `download.url` → send as VIDEO)
+// Order: V3 → V1 → V2
+// ============================================
+const getNormalVideoAPIs = (url) => [
+    `${API_BASE}/ytv3?url=${encodeURIComponent(url)}`,
+    `${API_BASE}/ytv1?url=${encodeURIComponent(url)}`,
+    `${API_BASE}/ytv2?url=${encodeURIComponent(url)}`
 ];
 
-async function saveAndSendAsDocument(conn, from, quotedMsg, downloadURL, title) {
-    let tempFile = null;
-    try {
-        tempFile = path.join(os.tmpdir(), `yt_${Date.now()}.mp4`);
-
-        const fileRes = await axios({
-            method: 'GET',
-            url: downloadURL,
-            responseType: 'stream'
-        });
-
-        const writer = fs.createWriteStream(tempFile);
-        fileRes.data.pipe(writer);
-
-        await new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-        });
-
-        await conn.sendMessage(from, {
-            document: { url: tempFile },
-            mimetype: "video/mp4",
-            fileName: `${title}.mp4`,
-            caption: `📄 *${title}*\n\n> Powered by JAWAD-MD`
-        }, { quoted: quotedMsg });
-
-        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
-        if (global.gc) global.gc();
-        return true;
-    } catch (e) {
-        try { if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
-        if (global.gc) global.gc();
-        console.error(`⚠️ Disk save failed:`, e.message);
-        return false;
-    }
-}
+// ============================================
+// FALLBACK VIDEO API (returns `download.urlx` → save to disk + send as DOCUMENT)
+// ============================================
+const getFallbackVideoAPI = (url) => `${API_BASE}/ytdl?url=${encodeURIComponent(url)}`;
 
 // ============================================
-// Rule:
-// - urlx present → save to disk + send as document
-// - url present  → direct send as video
+// COMMAND: play (Auto Audio)
 // ============================================
-async function handleVideoResponse(conn, from, quotedMsg, response, ytSearchTitle, asDocument = false) {
-    const data = response.data;
-    if (!data?.status || !data?.download) return false;
-
-    const apiTitle = data.download.title;
-    const title = (typeof apiTitle === 'string' && apiTitle.trim().length > 0)
-        ? apiTitle.trim()
-        : ytSearchTitle;
-
-    if (!title) return false;
-
-    // ytdl: urlx → save to disk + send as document
-    if (data.download.urlx) {
-        return await saveAndSendAsDocument(conn, from, quotedMsg, data.download.urlx, title);
-    }
-
-    // V1/V2/V3: url → direct send
-    if (data.download.url) {
-        const videoUrl = data.download.url;
-        if (asDocument) {
-            await conn.sendMessage(from, {
-                document: { url: videoUrl },
-                mimetype: "video/mp4",
-                fileName: `${title}.mp4`,
-                caption: `📄 *${title}*\n📹 Video Document\n\n> Powered by JAWAD-MD`
-            }, { quoted: quotedMsg });
-        } else {
-            await conn.sendMessage(from, {
-                video: { url: videoUrl },
-                caption: `🎬 *${title}*\n\n> Powered by JAWAD-MD`
-            }, { quoted: quotedMsg });
-        }
-        return true;
-    }
-
-    return false;
-}
-
 cmd({
     pattern: "play",
     alias: ["song", "music", "audio"],
@@ -160,8 +93,7 @@ cmd({
             }
             const videoId = getVideoId(text);
             if (!videoId) return reply("❌ Invalid YouTube URL!");
-            const searchFromUrl = await yts({ videoId: videoId });
-            vid = searchFromUrl;
+            vid = await yts({ videoId: videoId });
         } else {
             const search = await yts(text);
             if (!search || !search.videos || !search.videos.length) {
@@ -178,14 +110,16 @@ cmd({
             caption: `- *AUDIO DOWNLOADER 🎧*\n╭━━❐━⪼\n┇๏ *Title* - ${vid.title}\n┇๏ *Duration* - ${vid.timestamp}\n┇๏ *Views* - ${vid.views?.toLocaleString() || 'N/A'}\n┇๏ *Author* - ${vid.author?.name || 'Unknown'}\n┇๏ *Status* - Downloading...\n╰━━❑━⪼\n> Powered by JAWAD-MD`
         }, { quoted: mek });
 
+        let audioUrl = null;
         let success = false;
+
         const audioAPIs = getAudioAPIs(url);
 
         for (const api of audioAPIs) {
             if (success) break;
             try {
                 const response = await axios.get(api.url, { timeout: api.timeout });
-                const audioUrl = response.data?.status && response.data?.download?.url
+                audioUrl = response.data?.status && response.data?.download?.url
                     ? response.data.download.url
                     : null;
                 if (audioUrl) {
@@ -214,6 +148,9 @@ cmd({
     }
 });
 
+// ============================================
+// COMMAND: video
+// ============================================
 cmd({
     pattern: "video",
     alias: ["ytv", "ytmp4", "vd"],
@@ -222,6 +159,7 @@ cmd({
     react: "📹",
     filename: __filename
 }, async (conn, mek, m, { from, text, reply }) => {
+    let tempFile = null;
     try {
         if (!text) return reply("🎥 Please provide a video name or link!\n\nExample: `.video Alone Marshmello`");
 
@@ -236,8 +174,7 @@ cmd({
             }
             const videoId = getVideoId(text);
             if (!videoId) return reply("❌ Invalid YouTube URL!");
-            const searchFromUrl = await yts({ videoId: videoId });
-            vid = searchFromUrl;
+            vid = await yts({ videoId: videoId });
         } else {
             const search = await yts(text);
             if (!search || !search.videos || !search.videos.length) {
@@ -254,18 +191,76 @@ cmd({
             caption: `*🎬 VIDEO DOWNLOADER*\n\n🎞️ *Title:* ${vid.title}\n📺 *Channel:* ${vid.author?.name || 'Unknown'}\n🕒 *Duration:* ${vid.timestamp}\n\n*Status:* Downloading Video...\n\n> Powered by JAWAD-MD`
         }, { quoted: mek });
 
+        let videoUrl = null;
         let success = false;
-        const videoAPIs = getVideoAPIs(url);
 
-        for (const api of videoAPIs) {
+        // ---- PHASE 1: Normal APIs (V3 → V1 → V2) ----
+        const normalVideoAPIs = getNormalVideoAPIs(url);
+
+        for (const apiUrl of normalVideoAPIs) {
             if (success) break;
             try {
-                const response = await axios.get(api.url, { timeout: api.timeout });
-                const ok = await handleVideoResponse(conn, from, mek, response, vid.title, false);
-                if (ok) success = true;
+                const response = await axios.get(apiUrl, { timeout: 25000 });
+                videoUrl = response.data?.status && response.data?.download?.url
+                    ? response.data.download.url
+                    : null;
+                if (videoUrl) {
+                    await conn.sendMessage(from, {
+                        video: { url: videoUrl },
+                        caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                    }, { quoted: mek });
+                    success = true;
+                    break;
+                }
             } catch (e) {
-                console.error(`⚠️ API failed (${api.url}):`, e.message);
+                console.error(`⚠️ API failed (${apiUrl}):`, e.message);
                 continue;
+            }
+        }
+
+        // ---- PHASE 2: Fallback ytdl → save to disk + send as document ----
+        if (!success) {
+            try {
+                const fallbackUrl = getFallbackVideoAPI(url);
+                const response = await axios.get(fallbackUrl, { timeout: 30000 });
+
+                if (response.data?.status && response.data?.download?.urlx) {
+                    const downloadURL = response.data.download.urlx;
+                    const title = response.data.download.title || vid.title;
+
+                    tempFile = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
+
+                    const fileRes = await axios({
+                        method: 'GET',
+                        url: downloadURL,
+                        responseType: 'stream'
+                    });
+
+                    const writer = fs.createWriteStream(tempFile);
+                    fileRes.data.pipe(writer);
+
+                    await new Promise((resolve, reject) => {
+                        writer.on('finish', resolve);
+                        writer.on('error', reject);
+                    });
+
+                    await conn.sendMessage(from, {
+                        document: { url: tempFile },
+                        mimetype: "video/mp4",
+                        fileName: `${title}.mp4`,
+                        caption: `🍿 *${title}*\n\n> Powered by JAWAD-MD`
+                    }, { quoted: mek });
+
+                    try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                    if (global.gc) global.gc();
+                    tempFile = null;
+                    success = true;
+                }
+            } catch (e) {
+                try { if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                if (global.gc) global.gc();
+                tempFile = null;
+                console.error(`⚠️ ytdl fallback failed:`, e.message);
             }
         }
 
@@ -273,12 +268,17 @@ cmd({
         await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
 
     } catch (e) {
+        try { if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+        if (global.gc) global.gc();
         console.error("Error in .video command:", e);
         reply("❌ Error occurred, please try again later!");
         await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
     }
 });
 
+// ============================================
+// COMMAND: song (Interactive - Audio/Video/AudioDoc/VideoDoc)
+// ============================================
 cmd({
     pattern: "song",
     alias: ["yt", "music", "ytdl"],
@@ -351,14 +351,16 @@ cmd({
                     const asDocument = cleanSelect === "3" || cleanSelect === "4";
 
                     if (type === "mp3") {
+                        let audioUrl = null;
                         let success = false;
+
                         const audioAPIs = getAudioAPIs(vid.url);
 
                         for (const api of audioAPIs) {
                             if (success) break;
                             try {
                                 const response = await axios.get(api.url, { timeout: api.timeout });
-                                const audioUrl = response.data?.status && response.data?.download?.url
+                                audioUrl = response.data?.status && response.data?.download?.url
                                     ? response.data.download.url
                                     : null;
                                 if (audioUrl) {
@@ -393,18 +395,86 @@ cmd({
                         }
 
                     } else {
+                        let tempFile = null;
+                        let videoUrl = null;
                         let success = false;
-                        const videoAPIs = getVideoAPIs(vid.url);
 
-                        for (const api of videoAPIs) {
+                        // ---- PHASE 1: Normal APIs ----
+                        const normalVideoAPIs = getNormalVideoAPIs(vid.url);
+
+                        for (const apiUrl of normalVideoAPIs) {
                             if (success) break;
                             try {
-                                const response = await axios.get(api.url, { timeout: api.timeout });
-                                const ok = await handleVideoResponse(conn, from, received, response, vid.title, asDocument);
-                                if (ok) success = true;
+                                const response = await axios.get(apiUrl, { timeout: 25000 });
+                                videoUrl = response.data?.status && response.data?.download?.url
+                                    ? response.data.download.url
+                                    : null;
+                                if (videoUrl) {
+                                    if (asDocument) {
+                                        await conn.sendMessage(from, {
+                                            document: { url: videoUrl },
+                                            mimetype: "video/mp4",
+                                            fileName: `${vid.title}.mp4`,
+                                            caption: `📄 *${vid.title}*\n📹 Video Document\n\n> Powered by JAWAD-MD`
+                                        }, { quoted: received });
+                                    } else {
+                                        await conn.sendMessage(from, {
+                                            video: { url: videoUrl },
+                                            caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                                        }, { quoted: received });
+                                    }
+                                    success = true;
+                                    break;
+                                }
                             } catch (e) {
-                                console.error(`⚠️ API failed (${api.url}):`, e.message);
+                                console.error(`⚠️ API failed (${apiUrl}):`, e.message);
                                 continue;
+                            }
+                        }
+
+                        // ---- PHASE 2: ytdl fallback → disk + document ----
+                        if (!success) {
+                            try {
+                                const fallbackUrl = getFallbackVideoAPI(vid.url);
+                                const response = await axios.get(fallbackUrl, { timeout: 25000 });
+
+                                if (response.data?.status && response.data?.download?.urlx) {
+                                    const downloadURL = response.data.download.urlx;
+                                    const title = response.data.download.title || vid.title;
+
+                                    tempFile = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
+
+                                    const fileRes = await axios({
+                                        method: 'GET',
+                                        url: downloadURL,
+                                        responseType: 'stream'
+                                    });
+
+                                    const writer = fs.createWriteStream(tempFile);
+                                    fileRes.data.pipe(writer);
+
+                                    await new Promise((resolve, reject) => {
+                                        writer.on('finish', resolve);
+                                        writer.on('error', reject);
+                                    });
+
+                                    await conn.sendMessage(from, {
+                                        document: { url: tempFile },
+                                        mimetype: "video/mp4",
+                                        fileName: `${title}.mp4`,
+                                        caption: `🍿 *${title}*\n\n> Powered by JAWAD-MD`
+                                    }, { quoted: received });
+
+                                    try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                                    if (global.gc) global.gc();
+                                    tempFile = null;
+                                    success = true;
+                                }
+                            } catch (e) {
+                                try { if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                                if (global.gc) global.gc();
+                                tempFile = null;
+                                console.error(`⚠️ ytdl fallback failed:`, e.message);
                             }
                         }
 
@@ -434,6 +504,9 @@ cmd({
     }
 });
 
+// ============================================
+// COMMAND: drama (Video Only - Interactive)
+// ============================================
 cmd({
     pattern: "drama",
     alias: ["film", "series"],
@@ -502,18 +575,86 @@ cmd({
                 if (cleanSelect === "1" || cleanSelect === "2") {
                     const asDocument = cleanSelect === "2";
 
+                    let tempFile = null;
+                    let videoUrl = null;
                     let success = false;
-                    const videoAPIs = getVideoAPIs(vid.url);
 
-                    for (const api of videoAPIs) {
+                    // ---- PHASE 1: Normal APIs ----
+                    const normalVideoAPIs = getNormalVideoAPIs(vid.url);
+
+                    for (const apiUrl of normalVideoAPIs) {
                         if (success) break;
                         try {
-                            const response = await axios.get(api.url, { timeout: api.timeout });
-                            const ok = await handleVideoResponse(conn, from, received, response, vid.title, asDocument);
-                            if (ok) success = true;
+                            const response = await axios.get(apiUrl, { timeout: 25000 });
+                            videoUrl = response.data?.status && response.data?.download?.url
+                                ? response.data.download.url
+                                : null;
+                            if (videoUrl) {
+                                if (asDocument) {
+                                    await conn.sendMessage(from, {
+                                        document: { url: videoUrl },
+                                        mimetype: "video/mp4",
+                                        fileName: `${vid.title}.mp4`,
+                                        caption: `📄 *${vid.title}*\n📹 Video Document\n\n> Powered by JAWAD-MD`
+                                    }, { quoted: received });
+                                } else {
+                                    await conn.sendMessage(from, {
+                                        video: { url: videoUrl },
+                                        caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                                    }, { quoted: received });
+                                }
+                                success = true;
+                                break;
+                            }
                         } catch (e) {
-                            console.error(`⚠️ API failed (${api.url}):`, e.message);
+                            console.error(`⚠️ API failed (${apiUrl}):`, e.message);
                             continue;
+                        }
+                    }
+
+                    // ---- PHASE 2: ytdl fallback → disk + document ----
+                    if (!success) {
+                        try {
+                            const fallbackUrl = getFallbackVideoAPI(vid.url);
+                            const response = await axios.get(fallbackUrl, { timeout: 25000 });
+
+                            if (response.data?.status && response.data?.download?.urlx) {
+                                const downloadURL = response.data.download.urlx;
+                                const title = response.data.download.title || vid.title;
+
+                                tempFile = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
+
+                                const fileRes = await axios({
+                                    method: 'GET',
+                                    url: downloadURL,
+                                    responseType: 'stream'
+                                });
+
+                                const writer = fs.createWriteStream(tempFile);
+                                fileRes.data.pipe(writer);
+
+                                await new Promise((resolve, reject) => {
+                                    writer.on('finish', resolve);
+                                    writer.on('error', reject);
+                                });
+
+                                await conn.sendMessage(from, {
+                                    document: { url: tempFile },
+                                    mimetype: "video/mp4",
+                                    fileName: `${title}.mp4`,
+                                    caption: `🍿 *${title}*\n\n> Powered by JAWAD-MD`
+                                }, { quoted: received });
+
+                                try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                                if (global.gc) global.gc();
+                                tempFile = null;
+                                success = true;
+                            }
+                        } catch (e) {
+                            try { if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                            if (global.gc) global.gc();
+                            tempFile = null;
+                            console.error(`⚠️ ytdl fallback failed:`, e.message);
                         }
                     }
 
@@ -542,6 +683,9 @@ cmd({
     }
 });
 
+// ============================================
+// COMMAND: cartoon
+// ============================================
 cmd({
     pattern: "cartoon",
     alias: ["toon", "kids"],
@@ -550,6 +694,7 @@ cmd({
     react: "🧸",
     filename: __filename
 }, async (conn, mek, m, { from, text, reply }) => {
+    let tempFile = null;
     try {
         if (!text) return reply("🧸 Please provide a cartoon name!\n\nExample: `.cartoon Tom and Jerry`");
 
@@ -564,8 +709,7 @@ cmd({
             }
             const videoId = getVideoId(text);
             if (!videoId) return reply("❌ Invalid YouTube URL!");
-            const searchFromUrl = await yts({ videoId: videoId });
-            vid = searchFromUrl;
+            vid = await yts({ videoId: videoId });
         } else {
             const search = await yts(`${text} cartoon`);
             if (!search || !search.videos || !search.videos.length) {
@@ -582,18 +726,76 @@ cmd({
             caption: `*🧸 CARTOON DOWNLOADER*\n\n🎞️ *Title:* ${vid.title}\n📺 *Channel:* ${vid.author?.name || 'Unknown'}\n🕒 *Duration:* ${vid.timestamp}\n\n*Status:* Downloading Cartoon...\n\n> Powered by JAWAD-MD`
         }, { quoted: mek });
 
+        let videoUrl = null;
         let success = false;
-        const videoAPIs = getVideoAPIs(url);
 
-        for (const api of videoAPIs) {
+        // ---- PHASE 1: Normal APIs ----
+        const normalVideoAPIs = getNormalVideoAPIs(url);
+
+        for (const apiUrl of normalVideoAPIs) {
             if (success) break;
             try {
-                const response = await axios.get(api.url, { timeout: api.timeout });
-                const ok = await handleVideoResponse(conn, from, mek, response, vid.title, false);
-                if (ok) success = true;
+                const response = await axios.get(apiUrl, { timeout: 25000 });
+                videoUrl = response.data?.status && response.data?.download?.url
+                    ? response.data.download.url
+                    : null;
+                if (videoUrl) {
+                    await conn.sendMessage(from, {
+                        video: { url: videoUrl },
+                        caption: `🧸 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                    }, { quoted: mek });
+                    success = true;
+                    break;
+                }
             } catch (e) {
-                console.error(`⚠️ API failed (${api.url}):`, e.message);
+                console.error(`⚠️ API failed (${apiUrl}):`, e.message);
                 continue;
+            }
+        }
+
+        // ---- PHASE 2: ytdl fallback ----
+        if (!success) {
+            try {
+                const fallbackUrl = getFallbackVideoAPI(url);
+                const response = await axios.get(fallbackUrl, { timeout: 25000 });
+
+                if (response.data?.status && response.data?.download?.urlx) {
+                    const downloadURL = response.data.download.urlx;
+                    const title = response.data.download.title || vid.title;
+
+                    tempFile = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
+
+                    const fileRes = await axios({
+                        method: 'GET',
+                        url: downloadURL,
+                        responseType: 'stream'
+                    });
+
+                    const writer = fs.createWriteStream(tempFile);
+                    fileRes.data.pipe(writer);
+
+                    await new Promise((resolve, reject) => {
+                        writer.on('finish', resolve);
+                        writer.on('error', reject);
+                    });
+
+                    await conn.sendMessage(from, {
+                        document: { url: tempFile },
+                        mimetype: "video/mp4",
+                        fileName: `${title}.mp4`,
+                        caption: `🍿 *${title}*\n\n> Powered by JAWAD-MD`
+                    }, { quoted: mek });
+
+                    try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                    if (global.gc) global.gc();
+                    tempFile = null;
+                    success = true;
+                }
+            } catch (e) {
+                try { if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+                if (global.gc) global.gc();
+                tempFile = null;
+                console.error(`⚠️ ytdl fallback failed:`, e.message);
             }
         }
 
@@ -601,12 +803,17 @@ cmd({
         await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
 
     } catch (e) {
+        try { if (tempFile && fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch {}
+        if (global.gc) global.gc();
         console.error("Error in .cartoon command:", e);
         reply("❌ Error occurred, please try again later!");
         await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
     }
 });
 
+// ============================================
+// COMMAND: movie (uses ytdl urlx only)
+// ============================================
 cmd({
     pattern: "movie",
     alias: ["playmovie", "dlmovie"],
@@ -697,6 +904,9 @@ _⚡ Downloading as document..._
     }
 });
 
+// ============================================
+// COMMAND: yts (Search)
+// ============================================
 cmd({
     pattern: "yts",
     alias: ["ytsearch", "searchyt"],
