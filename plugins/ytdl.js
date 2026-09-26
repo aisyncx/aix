@@ -53,7 +53,7 @@ const getAudioAPIs = (url) => [
 // Order: V3 → YTDL → V1 → V2
 const getVideoAPIs = (url) => [
     { url: `${API_BASE}/ytv3?url=${encodeURIComponent(url)}`, timeout: 25000 },
-    { url: `${API_BASE}/ytdl?url=${encodeURIComponent(url)}`, timeout: 25000 },
+    { url: `${API_BASE}/ytdl?url=${encodeURIComponent(url)}`, timeout: 30000 },
     { url: `${API_BASE}/ytv1?url=${encodeURIComponent(url)}`, timeout: 25000 },
     { url: `${API_BASE}/ytv2?url=${encodeURIComponent(url)}`, timeout: 25000 }
 ];
@@ -652,7 +652,7 @@ _⚡ Downloading as document..._
         }, { quoted: mek });
 
         const apiUrl = `${API_BASE}/ytdl?url=${encodeURIComponent(vid.url)}`;
-        const response = await axios.get(apiUrl, { timeout: 25000 });
+        const response = await axios.get(apiUrl, { timeout: 90000 });
 
         if (!response.data?.status || !response.data?.download?.urlx) {
             return reply("❌ Failed to get movie! Try again later.");
