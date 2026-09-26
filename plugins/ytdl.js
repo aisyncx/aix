@@ -54,7 +54,7 @@ const getAudioAPIs = (url) => [
 ];
 
 // ============================================
-// NORMAL VIDEO APIS (return `download.url` → send as VIDEO)
+// NORMAL VIDEO APIS (return download.url → send as VIDEO)
 // Order: V3 → V1 → V2
 // ============================================
 const getNormalVideoAPIs = (url) => [
@@ -64,7 +64,7 @@ const getNormalVideoAPIs = (url) => [
 ];
 
 // ============================================
-// FALLBACK VIDEO API (returns `download.urlx` → save to disk + send as DOCUMENT)
+// FALLBACK VIDEO API (returns download.urlx → save to disk + send as DOCUMENT)
 // ============================================
 const getFallbackVideoAPI = (url) => `${API_BASE}/ytdl?url=${encodeURIComponent(url)}`;
 
@@ -110,27 +110,30 @@ cmd({
             caption: `- *AUDIO DOWNLOADER 🎧*\n╭━━❐━⪼\n┇๏ *Title* - ${vid.title}\n┇๏ *Duration* - ${vid.timestamp}\n┇๏ *Views* - ${vid.views?.toLocaleString() || 'N/A'}\n┇๏ *Author* - ${vid.author?.name || 'Unknown'}\n┇๏ *Status* - Downloading...\n╰━━❑━⪼\n> Powered by JAWAD-MD`
         }, { quoted: mek });
 
-        let audioUrl = null;
         let success = false;
-
         const audioAPIs = getAudioAPIs(url);
 
         for (const api of audioAPIs) {
             if (success) break;
             try {
                 const response = await axios.get(api.url, { timeout: api.timeout });
-                audioUrl = response.data?.status && response.data?.download?.url
+                const audioUrl = response.data?.status && response.data?.download?.url
                     ? response.data.download.url
                     : null;
                 if (audioUrl) {
-                    await conn.sendMessage(from, {
-                        audio: { url: audioUrl },
-                        mimetype: "audio/mpeg",
-                        fileName: `${vid.title}.mp3`,
-                        ptt: false
-                    }, { quoted: mek });
-                    success = true;
-                    break;
+                    try {
+                        await conn.sendMessage(from, {
+                            audio: { url: audioUrl },
+                            mimetype: "audio/mpeg",
+                            fileName: `${vid.title}.mp3`,
+                            ptt: false
+                        }, { quoted: mek });
+                        success = true;
+                        break;
+                    } catch (sendErr) {
+                        console.error(`⚠️ Audio send failed (${api.url}):`, sendErr.message);
+                        continue;
+                    }
                 }
             } catch (e) {
                 console.error(`⚠️ API failed (${api.url}):`, e.message);
@@ -191,7 +194,6 @@ cmd({
             caption: `*🎬 VIDEO DOWNLOADER*\n\n🎞️ *Title:* ${vid.title}\n📺 *Channel:* ${vid.author?.name || 'Unknown'}\n🕒 *Duration:* ${vid.timestamp}\n\n*Status:* Downloading Video...\n\n> Powered by JAWAD-MD`
         }, { quoted: mek });
 
-        let videoUrl = null;
         let success = false;
 
         // ---- PHASE 1: Normal APIs (V3 → V1 → V2) ----
@@ -201,16 +203,21 @@ cmd({
             if (success) break;
             try {
                 const response = await axios.get(apiUrl, { timeout: 25000 });
-                videoUrl = response.data?.status && response.data?.download?.url
+                const videoUrl = response.data?.status && response.data?.download?.url
                     ? response.data.download.url
                     : null;
                 if (videoUrl) {
-                    await conn.sendMessage(from, {
-                        video: { url: videoUrl },
-                        caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
-                    }, { quoted: mek });
-                    success = true;
-                    break;
+                    try {
+                        await conn.sendMessage(from, {
+                            video: { url: videoUrl },
+                            caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                        }, { quoted: mek });
+                        success = true;
+                        break;
+                    } catch (sendErr) {
+                        console.error(`⚠️ Send failed (${apiUrl}):`, sendErr.message);
+                        continue;
+                    }
                 }
             } catch (e) {
                 console.error(`⚠️ API failed (${apiUrl}):`, e.message);
@@ -222,7 +229,7 @@ cmd({
         if (!success) {
             try {
                 const fallbackUrl = getFallbackVideoAPI(url);
-                const response = await axios.get(fallbackUrl, { timeout: 30000 });
+                const response = await axios.get(fallbackUrl, { timeout: 25000 });
 
                 if (response.data?.status && response.data?.download?.urlx) {
                     const downloadURL = response.data.download.urlx;
@@ -351,36 +358,39 @@ cmd({
                     const asDocument = cleanSelect === "3" || cleanSelect === "4";
 
                     if (type === "mp3") {
-                        let audioUrl = null;
                         let success = false;
-
                         const audioAPIs = getAudioAPIs(vid.url);
 
                         for (const api of audioAPIs) {
                             if (success) break;
                             try {
                                 const response = await axios.get(api.url, { timeout: api.timeout });
-                                audioUrl = response.data?.status && response.data?.download?.url
+                                const audioUrl = response.data?.status && response.data?.download?.url
                                     ? response.data.download.url
                                     : null;
                                 if (audioUrl) {
-                                    if (asDocument) {
-                                        await conn.sendMessage(from, {
-                                            document: { url: audioUrl },
-                                            mimetype: "audio/mpeg",
-                                            fileName: `${vid.title}.mp3`,
-                                            caption: `📄 *${vid.title}*\n🎧 Audio Document\n\n> Powered by JAWAD-MD`
-                                        }, { quoted: received });
-                                    } else {
-                                        await conn.sendMessage(from, {
-                                            audio: { url: audioUrl },
-                                            mimetype: "audio/mpeg",
-                                            fileName: `${vid.title}.mp3`,
-                                            ptt: false
-                                        }, { quoted: received });
+                                    try {
+                                        if (asDocument) {
+                                            await conn.sendMessage(from, {
+                                                document: { url: audioUrl },
+                                                mimetype: "audio/mpeg",
+                                                fileName: `${vid.title}.mp3`,
+                                                caption: `📄 *${vid.title}*\n🎧 Audio Document\n\n> Powered by JAWAD-MD`
+                                            }, { quoted: received });
+                                        } else {
+                                            await conn.sendMessage(from, {
+                                                audio: { url: audioUrl },
+                                                mimetype: "audio/mpeg",
+                                                fileName: `${vid.title}.mp3`,
+                                                ptt: false
+                                            }, { quoted: received });
+                                        }
+                                        success = true;
+                                        break;
+                                    } catch (sendErr) {
+                                        console.error(`⚠️ Audio send failed (${api.url}):`, sendErr.message);
+                                        continue;
                                     }
-                                    success = true;
-                                    break;
                                 }
                             } catch (e) {
                                 console.error(`⚠️ API failed (${api.url}):`, e.message);
@@ -396,7 +406,6 @@ cmd({
 
                     } else {
                         let tempFile = null;
-                        let videoUrl = null;
                         let success = false;
 
                         // ---- PHASE 1: Normal APIs ----
@@ -406,25 +415,30 @@ cmd({
                             if (success) break;
                             try {
                                 const response = await axios.get(apiUrl, { timeout: 25000 });
-                                videoUrl = response.data?.status && response.data?.download?.url
+                                const videoUrl = response.data?.status && response.data?.download?.url
                                     ? response.data.download.url
                                     : null;
                                 if (videoUrl) {
-                                    if (asDocument) {
-                                        await conn.sendMessage(from, {
-                                            document: { url: videoUrl },
-                                            mimetype: "video/mp4",
-                                            fileName: `${vid.title}.mp4`,
-                                            caption: `📄 *${vid.title}*\n📹 Video Document\n\n> Powered by JAWAD-MD`
-                                        }, { quoted: received });
-                                    } else {
-                                        await conn.sendMessage(from, {
-                                            video: { url: videoUrl },
-                                            caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
-                                        }, { quoted: received });
+                                    try {
+                                        if (asDocument) {
+                                            await conn.sendMessage(from, {
+                                                document: { url: videoUrl },
+                                                mimetype: "video/mp4",
+                                                fileName: `${vid.title}.mp4`,
+                                                caption: `📄 *${vid.title}*\n📹 Video Document\n\n> Powered by JAWAD-MD`
+                                            }, { quoted: received });
+                                        } else {
+                                            await conn.sendMessage(from, {
+                                                video: { url: videoUrl },
+                                                caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                                            }, { quoted: received });
+                                        }
+                                        success = true;
+                                        break;
+                                    } catch (sendErr) {
+                                        console.error(`⚠️ Video send failed (${apiUrl}):`, sendErr.message);
+                                        continue;
                                     }
-                                    success = true;
-                                    break;
                                 }
                             } catch (e) {
                                 console.error(`⚠️ API failed (${apiUrl}):`, e.message);
@@ -432,7 +446,7 @@ cmd({
                             }
                         }
 
-                        // ---- PHASE 2: ytdl fallback → disk + document ----
+                        // ---- PHASE 2: ytdl fallback ----
                         if (!success) {
                             try {
                                 const fallbackUrl = getFallbackVideoAPI(vid.url);
@@ -576,7 +590,6 @@ cmd({
                     const asDocument = cleanSelect === "2";
 
                     let tempFile = null;
-                    let videoUrl = null;
                     let success = false;
 
                     // ---- PHASE 1: Normal APIs ----
@@ -586,25 +599,30 @@ cmd({
                         if (success) break;
                         try {
                             const response = await axios.get(apiUrl, { timeout: 25000 });
-                            videoUrl = response.data?.status && response.data?.download?.url
+                            const videoUrl = response.data?.status && response.data?.download?.url
                                 ? response.data.download.url
                                 : null;
                             if (videoUrl) {
-                                if (asDocument) {
-                                    await conn.sendMessage(from, {
-                                        document: { url: videoUrl },
-                                        mimetype: "video/mp4",
-                                        fileName: `${vid.title}.mp4`,
-                                        caption: `📄 *${vid.title}*\n📹 Video Document\n\n> Powered by JAWAD-MD`
-                                    }, { quoted: received });
-                                } else {
-                                    await conn.sendMessage(from, {
-                                        video: { url: videoUrl },
-                                        caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
-                                    }, { quoted: received });
+                                try {
+                                    if (asDocument) {
+                                        await conn.sendMessage(from, {
+                                            document: { url: videoUrl },
+                                            mimetype: "video/mp4",
+                                            fileName: `${vid.title}.mp4`,
+                                            caption: `📄 *${vid.title}*\n📹 Video Document\n\n> Powered by JAWAD-MD`
+                                        }, { quoted: received });
+                                    } else {
+                                        await conn.sendMessage(from, {
+                                            video: { url: videoUrl },
+                                            caption: `🎬 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                                        }, { quoted: received });
+                                    }
+                                    success = true;
+                                    break;
+                                } catch (sendErr) {
+                                    console.error(`⚠️ Video send failed (${apiUrl}):`, sendErr.message);
+                                    continue;
                                 }
-                                success = true;
-                                break;
                             }
                         } catch (e) {
                             console.error(`⚠️ API failed (${apiUrl}):`, e.message);
@@ -612,7 +630,7 @@ cmd({
                         }
                     }
 
-                    // ---- PHASE 2: ytdl fallback → disk + document ----
+                    // ---- PHASE 2: ytdl fallback ----
                     if (!success) {
                         try {
                             const fallbackUrl = getFallbackVideoAPI(vid.url);
@@ -726,7 +744,6 @@ cmd({
             caption: `*🧸 CARTOON DOWNLOADER*\n\n🎞️ *Title:* ${vid.title}\n📺 *Channel:* ${vid.author?.name || 'Unknown'}\n🕒 *Duration:* ${vid.timestamp}\n\n*Status:* Downloading Cartoon...\n\n> Powered by JAWAD-MD`
         }, { quoted: mek });
 
-        let videoUrl = null;
         let success = false;
 
         // ---- PHASE 1: Normal APIs ----
@@ -736,16 +753,21 @@ cmd({
             if (success) break;
             try {
                 const response = await axios.get(apiUrl, { timeout: 25000 });
-                videoUrl = response.data?.status && response.data?.download?.url
+                const videoUrl = response.data?.status && response.data?.download?.url
                     ? response.data.download.url
                     : null;
                 if (videoUrl) {
-                    await conn.sendMessage(from, {
-                        video: { url: videoUrl },
-                        caption: `🧸 *${vid.title}*\n\n> Powered by JAWAD-MD`
-                    }, { quoted: mek });
-                    success = true;
-                    break;
+                    try {
+                        await conn.sendMessage(from, {
+                            video: { url: videoUrl },
+                            caption: `🧸 *${vid.title}*\n\n> Powered by JAWAD-MD`
+                        }, { quoted: mek });
+                        success = true;
+                        break;
+                    } catch (sendErr) {
+                        console.error(`⚠️ Send failed (${apiUrl}):`, sendErr.message);
+                        continue;
+                    }
                 }
             } catch (e) {
                 console.error(`⚠️ API failed (${apiUrl}):`, e.message);
@@ -859,7 +881,7 @@ _⚡ Downloading as document..._
         }, { quoted: mek });
 
         const apiUrl = `${API_BASE}/ytdl?url=${encodeURIComponent(vid.url)}`;
-        const response = await axios.get(apiUrl, { timeout: 90000 });
+        const response = await axios.get(apiUrl, { timeout: 25000 });
 
         if (!response.data?.status || !response.data?.download?.urlx) {
             return reply("❌ Failed to get movie! Try again later.");
@@ -944,7 +966,7 @@ async (conn, mek, m, { from, text, reply }) => {
             mesaj += `*╰───────────────────⊷*\n\n`;
         });
 
-        mesaj += `*╭───⬡ ${toSmallCaps('Powered By')} ⬡───*\n`;
+        mesaj += `*╭───⬡ ${toSmallCaps('Powered By')} ⬡ ───*\n`;
         mesaj += `*┋ ⬡ ${toSmallCaps('JAWAD-MD')}*\n`;
         mesaj += `*╰───────────────────⊷*`;
         
